@@ -18,6 +18,7 @@ const FLAGS = ['s', 'z'];
 export function initialMachineState() {
     return {
         registers: Buffer.alloc(REGISTER_WORD_LAYOUT.__size),
+        ip: 0,
         flags: { s: false, z: false },
     };
 }
@@ -39,7 +40,7 @@ function writeRegister(machineState, name, value) {
 
 export function cloneMachineState(machineState) {
     const registers = Buffer.from(machineState.registers);
-    return { registers, flags: { ...machineState.flags } };
+    return { registers, flags: { ...machineState.flags }, ip: machineState.ip };
 }
 
 function reinterpretUInt16AsInt16(value) {
@@ -58,8 +59,11 @@ function reinterpretInt16AsUInt16(value) {
     return truncated;
 }
 
-function printRegisterAsHex(value, { pad } = {}) {
-    const asUInt16 = reinterpretInt16AsUInt16(value);
+function printRegisterAsHex(value, { pad, unsigned } = {}) {
+    let asUInt16 = value;
+    if (!unsigned) {
+        asUInt16 = reinterpretInt16AsUInt16(value);
+    }
     let hex = asUInt16.toString(16);
     if (pad) {
         hex = '0'.repeat(4 - hex.length) + hex;
@@ -88,6 +92,15 @@ export function printMachineUpdates(beforeMachineState, afterMachineState) {
             updates.push(`${registerName}:${beforeAsHex}->${afterAsHex}`);
         }
     }
+    if (beforeMachineState.ip !== afterMachineState.ip) {
+        const beforeAsHex = printRegisterAsHex(beforeMachineState.ip, {
+            unsigned: true,
+        });
+        const afterAsHex = printRegisterAsHex(afterMachineState.ip, {
+            unsigned: true,
+        });
+        updates.push(`ip:${beforeAsHex}->${afterAsHex}`);
+    }
     let didFlagsUpdate = false;
     for (const f of FLAGS) {
         if (beforeMachineState.flags[f] !== afterMachineState.flags[f]) {
@@ -111,19 +124,17 @@ export function outputFinalMachineState(machineState) {
             console.log(`      ${registerName}: ${valueAsHex} (${value})`);
         }
     }
+    if (machineState.ip !== 0) {
+        const valueAsHex = printRegisterAsHex(machineState.ip, {
+            pad: true,
+            unsigned: true,
+        });
+        console.log(`      ip: ${valueAsHex} (${machineState.ip})`);
+    }
     console.log(`   flags: ${printFlags(machineState.flags)}`);
 }
 
-export function executeBinaryOp(instruction, machineState) {
-    const { op, destination } = instruction;
-    const value = computeBinaryOpResult(instruction, machineState);
-    if (op !== 'cmp') {
-        const { registerName } = destination;
-        writeRegister(machineState, registerName, value);
-    }
-}
-
-function computeBinaryOpResult(instruction, machineState) {
+function computeBinaryOpResult(machineState, instruction) {
     const { source, destination, op } = instruction;
     let value = 0;
     switch (source.type) {
@@ -150,4 +161,22 @@ function computeBinaryOpResult(instruction, machineState) {
         machineState.flags.s = value < 0;
     }
     return value;
+}
+
+export function executeBinaryOp(machineState, instruction) {
+    const { op, destination } = instruction;
+    const value = computeBinaryOpResult(machineState, instruction);
+    if (op !== 'cmp') {
+        const { registerName } = destination;
+        writeRegister(machineState, registerName, value);
+    }
+}
+
+export function execJump(machineState, instruction) {
+    const { op } = instruction;
+    if (op === 'jne') {
+        if (!machineState.flags.z) {
+            machineState.ip += instruction.increment;
+        }
+    }
 }

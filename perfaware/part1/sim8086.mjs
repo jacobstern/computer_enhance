@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 import {
     cloneMachineState,
+    execJump,
     executeBinaryOp,
     initialMachineState,
     outputFinalMachineState,
@@ -274,7 +275,7 @@ function printBinaryOp(instruction) {
     }
 }
 
-function generateLabelsMap(instructions) {
+function makeLabelsMap(instructions) {
     const labelsMap = new Map();
     let labelCount = 0;
     for (let i = 0; i < instructions.length; i++) {
@@ -290,6 +291,15 @@ function generateLabelsMap(instructions) {
     return labelsMap;
 }
 
+function makeOffsetReverseLookupMap(instructions) {
+    const map = new Map();
+    for (const instruction of instructions) {
+        const { offset } = instruction;
+        map.set(offset, instruction);
+    }
+    return map;
+}
+
 function outputInstructions(inFile, instructions, { exec } = {}) {
     if (exec) {
         console.log(`--- ${inFile} execution ---`);
@@ -298,12 +308,17 @@ function outputInstructions(inFile, instructions, { exec } = {}) {
         console.log('bits 16');
     }
 
-    const labelsMap = generateLabelsMap(instructions);
+    const labelsMap = makeLabelsMap(instructions);
+    const offsetReverseLookupMap = makeOffsetReverseLookupMap(instructions);
     let machineState = initialMachineState();
-    for (const { offset, size, instruction } of instructions) {
+    let ip = 0;
+    while (offsetReverseLookupMap.has(ip)) {
+        const { offset, size, instruction } = offsetReverseLookupMap.get(ip);
         let newMachineState;
+        ip += size;
         if (exec) {
             newMachineState = cloneMachineState(machineState);
+            newMachineState.ip = ip;
         }
         if (labelsMap.has(offset)) {
             console.log(`${labelsMap.get(offset)}:`);
@@ -313,7 +328,7 @@ function outputInstructions(inFile, instructions, { exec } = {}) {
             case 'binaryOp':
                 opString = printBinaryOp(instruction);
                 if (exec) {
-                    executeBinaryOp(instruction, newMachineState);
+                    executeBinaryOp(newMachineState, instruction);
                 }
                 break;
             case 'jump':
@@ -321,6 +336,9 @@ function outputInstructions(inFile, instructions, { exec } = {}) {
                 const target = offset + size + increment;
                 const label = labelsMap.get(target);
                 opString = `${op} ${label}`;
+                if (exec) {
+                    execJump(newMachineState, instruction);
+                }
                 break;
             default:
                 break;
@@ -331,6 +349,9 @@ function outputInstructions(inFile, instructions, { exec } = {}) {
             console.log([opString, updates].join(' ; '));
         } else {
             console.log(opString);
+        }
+        if (exec) {
+            ip = machineState.ip;
         }
     }
 
