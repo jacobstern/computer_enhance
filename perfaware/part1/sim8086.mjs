@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 
 import {
+    cloneMachineState,
     executeBinaryOp,
     initialMachineState,
     outputFinalMachineState,
@@ -290,13 +291,20 @@ function generateLabelsMap(instructions) {
 }
 
 function outputInstructions(inFile, instructions, { exec } = {}) {
-    console.log(`; ${inFile} disassembly:`);
-    console.log('bits 16');
+    if (exec) {
+        console.log(`--- ${inFile} execution ---`);
+    } else {
+        console.log(`; ${inFile} disassembly:`);
+        console.log('bits 16');
+    }
 
     const labelsMap = generateLabelsMap(instructions);
     let machineState = initialMachineState();
     for (const { offset, size, instruction } of instructions) {
-        let updatedMachineState = machineState;
+        let newMachineState;
+        if (exec) {
+            newMachineState = cloneMachineState(machineState);
+        }
         if (labelsMap.has(offset)) {
             console.log(`${labelsMap.get(offset)}:`);
         }
@@ -305,10 +313,7 @@ function outputInstructions(inFile, instructions, { exec } = {}) {
             case 'binaryOp':
                 opString = printBinaryOp(instruction);
                 if (exec) {
-                    updatedMachineState = executeBinaryOp(
-                        instruction,
-                        machineState
-                    );
+                    executeBinaryOp(instruction, newMachineState);
                 }
                 break;
             case 'jump':
@@ -321,11 +326,8 @@ function outputInstructions(inFile, instructions, { exec } = {}) {
                 break;
         }
         if (exec) {
-            const updates = printMachineUpdates(
-                machineState,
-                updatedMachineState
-            );
-            machineState = updatedMachineState;
+            const updates = printMachineUpdates(machineState, newMachineState);
+            machineState = newMachineState;
             console.log([opString, updates].join(' ; '));
         } else {
             console.log(opString);

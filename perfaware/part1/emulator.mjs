@@ -13,9 +13,12 @@ Object.defineProperty(REGISTER_WORD_LAYOUT, '__size', {
     enumerable: false,
 });
 
+const FLAGS = ['s', 'z'];
+
 export function initialMachineState() {
     return {
         registers: Buffer.alloc(REGISTER_WORD_LAYOUT.__size),
+        flags: { s: false, z: false },
     };
 }
 
@@ -34,15 +37,23 @@ function writeRegister(machineState, name, value) {
     }
 }
 
-function cloneMachineState(machineState) {
+export function cloneMachineState(machineState) {
     const registers = Buffer.from(machineState.registers);
-    return { registers };
+    return { registers, flags: { ...machineState.flags } };
+}
+
+function reinterpretUInt16AsInt16(value) {
+    const truncated = value & ((1 << 15) - 1);
+    if (value & (1 << 15)) {
+        return -((1 << 15) - truncated);
+    }
+    return truncated;
 }
 
 function reinterpretInt16AsUInt16(value) {
     let truncated = value & ((1 << 15) - 1);
     if (value < 0) {
-        truncated &= 1 << 15;
+        truncated |= 1 << 15;
     }
     return truncated;
 }
@@ -56,6 +67,16 @@ function printRegisterAsHex(value, { pad } = {}) {
     return '0x' + hex;
 }
 
+function printFlags(flags) {
+    let flagsString = '';
+    for (const f of FLAGS) {
+        if (flags[f]) {
+            flagsString += f.toUpperCase();
+        }
+    }
+    return flagsString;
+}
+
 export function printMachineUpdates(beforeMachineState, afterMachineState) {
     const updates = [];
     for (const registerName in REGISTER_WORD_LAYOUT) {
@@ -67,39 +88,66 @@ export function printMachineUpdates(beforeMachineState, afterMachineState) {
             updates.push(`${registerName}:${beforeAsHex}->${afterAsHex}`);
         }
     }
-    return updates.join(', ');
+    let didFlagsUpdate = false;
+    for (const f of FLAGS) {
+        if (beforeMachineState.flags[f] !== afterMachineState.flags[f]) {
+            didFlagsUpdate = true;
+        }
+    }
+    if (didFlagsUpdate) {
+        const beforeFlags = printFlags(beforeMachineState.flags);
+        const afterFlags = printFlags(afterMachineState.flags);
+        updates.push(`flags:${beforeFlags}->${afterFlags}`);
+    }
+    return updates.join(' ');
 }
 
 export function outputFinalMachineState(machineState) {
     console.log('Final registers:');
     for (const registerName in REGISTER_WORD_LAYOUT) {
         const value = readRegister(machineState, registerName);
-        const valueAsHex = printRegisterAsHex(value, { pad: true });
-        console.log(`      ${registerName}: ${valueAsHex} (${value})`);
+        if (value !== 0) {
+            const valueAsHex = printRegisterAsHex(value, { pad: true });
+            console.log(`      ${registerName}: ${valueAsHex} (${value})`);
+        }
     }
+    console.log(`   flags: ${printFlags(machineState.flags)}`);
 }
 
 export function executeBinaryOp(instruction, machineState) {
-    const { op, destination, source } = instruction;
-    const updatedMachineState = cloneMachineState(machineState);
-    switch (op) {
-        case 'mov':
-            let value = 0;
-            switch (source.type) {
-                case 'register':
-                    value = readRegister(machineState, source.registerName);
-                    break;
-                case 'immediate':
-                    value = source.value;
-                    break;
-                default:
-                    break;
-            }
-            if (destination.type === 'register') {
-                const { registerName } = destination;
-                writeRegister(updatedMachineState, registerName, value);
-            }
-        default:
-            return updatedMachineState;
+    const { op, destination } = instruction;
+    const value = computeBinaryOpResult(instruction, machineState);
+    if (op !== 'cmp') {
+        const { registerName } = destination;
+        writeRegister(machineState, registerName, value);
     }
+}
+
+function computeBinaryOpResult(instruction, machineState) {
+    const { source, destination, op } = instruction;
+    let value = 0;
+    switch (source.type) {
+        case 'register':
+            value = readRegister(machineState, source.registerName);
+            break;
+        case 'immediate':
+            value = source.value;
+            break;
+        default:
+            break;
+    }
+    if (op === 'cmp' || op === 'add' || op === 'sub') {
+        const { registerName } = destination;
+        if (op === 'cmp' || op === 'sub') {
+            value = -value;
+        }
+        const valueAsUInt16 = reinterpretInt16AsUInt16(value);
+        const destValue = readRegister(machineState, registerName);
+        const destValueAsUInt16 = reinterpretInt16AsUInt16(destValue);
+        const result = valueAsUInt16 + destValueAsUInt16;
+        value = reinterpretUInt16AsInt16(result);
+        machineState.flags.z = value === 0;
+        machineState.flags.s = value < 0;
+    }
+    return value;
 }
