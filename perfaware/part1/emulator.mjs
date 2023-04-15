@@ -23,6 +23,12 @@ export function initialMachineState() {
     };
 }
 
+/**
+ *
+ * @param {*} machineState
+ * @param {string} name
+ * @returns {number} The value of the register
+ */
 function readRegister(machineState, name) {
     if (REGISTER_WORD_LAYOUT.propertyIsEnumerable(name)) {
         const offset = REGISTER_WORD_LAYOUT[name];
@@ -134,7 +140,38 @@ export function outputFinalMachineState(machineState) {
     console.log(`   flags: ${printFlags(machineState.flags)}`);
 }
 
-function computeBinaryOpResult(machineState, instruction) {
+function evaluateEffectiveAddress(machineState, operand) {
+    const { base, displacement = 0 } = operand;
+    let baseValue = 0;
+    switch (base) {
+        case 'bx + si':
+            baseValue =
+                readRegister(machineState, 'bx') +
+                readRegister(machineState, 'si');
+            break;
+        case 'bx + di':
+            baseValue =
+                readRegister(machineState, 'bx') +
+                readRegister(machineState, 'di');
+            break;
+        case 'bp + si':
+            baseValue =
+                readRegister(machineState, 'bp') +
+                readRegister(machineState, 'si');
+            break;
+        case 'bp + di':
+            baseValue =
+                readRegister(machineState, 'bp') +
+                readRegister(machineState, 'di');
+            break;
+        default:
+            baseValue = readRegister(machineState, base);
+            break;
+    }
+    return baseValue + displacement;
+}
+
+function computeBinaryOpResult(machineState, instruction, memory) {
     const { source, destination, op } = instruction;
     let value = 0;
     switch (source.type) {
@@ -144,6 +181,14 @@ function computeBinaryOpResult(machineState, instruction) {
         case 'immediate':
             value = source.value;
             break;
+        case 'directAddress':
+            value = memory.readInt16LE(source.address);
+            break;
+        case 'effectiveAddress': {
+            const address = evaluateEffectiveAddress(machineState, source);
+            value = memory.readInt16LE(address);
+            break;
+        }
         default:
             break;
     }
@@ -163,12 +208,28 @@ function computeBinaryOpResult(machineState, instruction) {
     return value;
 }
 
-export function executeBinaryOp(machineState, instruction) {
+function writeBinaryOp(machineState, destination, value, memory) {
+    switch (destination.type) {
+        case 'register':
+            writeRegister(machineState, destination.registerName, value);
+            break;
+        case 'directAddress':
+            memory.writeInt16LE(value, destination.address);
+            break;
+        case 'effectiveAddress':
+            const address = evaluateEffectiveAddress(machineState, destination);
+            memory.writeInt16LE(value, address);
+            break;
+        default:
+            break;
+    }
+}
+
+export function executeBinaryOp(machineState, instruction, memory) {
     const { op, destination } = instruction;
-    const value = computeBinaryOpResult(machineState, instruction);
+    const value = computeBinaryOpResult(machineState, instruction, memory);
     if (op !== 'cmp') {
-        const { registerName } = destination;
-        writeRegister(machineState, registerName, value);
+        writeBinaryOp(machineState, destination, value, memory);
     }
 }
 

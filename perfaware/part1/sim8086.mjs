@@ -160,10 +160,14 @@ function parseImmediateToRegister(buffer, offset, op) {
     return [consumed, instruction];
 }
 
-function parseImmediateToRegisterOrMemory(buffer, offset, op) {
+function parseImmediateToRegisterOrMemory(buffer, offset, op, hasSBit = false) {
     let [consumed, variableOperand] = parseVariableOperand(buffer, offset);
     const firstByte = buffer[offset];
-    const sw = firstByte & 0b00000011;
+    const w = firstByte & 0b00000001;
+    let sw = w;
+    if (hasSBit) {
+        sw = firstByte & 0b00000011;
+    }
     const [size, value] = parseImmediate(buffer, offset + consumed, sw === 1);
     consumed += size;
     const instruction = {
@@ -173,7 +177,6 @@ function parseImmediateToRegisterOrMemory(buffer, offset, op) {
         source: { type: 'immediate', value },
     };
     if (variableOperand.type !== 'register') {
-        const w = firstByte & 0b00000001;
         instruction.width = w ? 'word' : 'byte';
     }
     return [consumed, instruction];
@@ -221,6 +224,9 @@ function parseInstruction(buffer, offset) {
     if ((firstByte & 0b11110000) === 0b10110000) {
         return parseImmediateToRegister(buffer, offset, 'mov');
     }
+    if ((firstByte & 0b11111110) === 0b11000110) {
+        return parseImmediateToRegisterOrMemory(buffer, offset, 'mov');
+    }
     if ((firstByte & 0b11000100) === 0b00000000) {
         const op = parseGenericBinaryOp(firstByte);
         return parseRegisterOrMemoryToOrFromRegister(buffer, offset, op);
@@ -228,7 +234,7 @@ function parseInstruction(buffer, offset) {
     if ((firstByte & 0b11111100) === 0b10000000) {
         const secondByte = buffer[offset + 1];
         const op = parseGenericBinaryOp(secondByte);
-        return parseImmediateToRegisterOrMemory(buffer, offset, op);
+        return parseImmediateToRegisterOrMemory(buffer, offset, op, true);
     }
     if ((firstByte & 0b11000100) === 0b00000100) {
         const op = parseGenericBinaryOp(firstByte);
@@ -300,7 +306,7 @@ function makeOffsetReverseLookupMap(instructions) {
     return map;
 }
 
-function outputInstructions(inFile, instructions, { exec } = {}) {
+function outputInstructions(inFile, instructions, memory, { exec } = {}) {
     if (exec) {
         console.log(`--- ${inFile} execution ---`);
     } else {
@@ -328,7 +334,7 @@ function outputInstructions(inFile, instructions, { exec } = {}) {
             case 'binaryOp':
                 opString = printBinaryOp(instruction);
                 if (exec) {
-                    executeBinaryOp(newMachineState, instruction);
+                    executeBinaryOp(newMachineState, instruction, memory);
                 }
                 break;
             case 'jump':
@@ -365,14 +371,17 @@ function outputInstructions(inFile, instructions, { exec } = {}) {
 
 function main() {
     const inFile = process.argv.slice(2).find((arg) => !arg.startsWith('-'));
-    const buffer = readFileSync(inFile);
+    const fileBuffer = readFileSync(inFile);
+    const programSize = fileBuffer.length;
+    const memory = Buffer.alloc(65536);
+    fileBuffer.copy(memory);
 
     let offset = 0,
         parseError = null;
     const instructions = [];
-    while (offset < buffer.length) {
+    while (offset < programSize) {
         try {
-            const [consumed, instruction] = parseInstruction(buffer, offset);
+            const [consumed, instruction] = parseInstruction(memory, offset);
             instructions.push({ offset, size: consumed, instruction });
             offset += consumed;
         } catch (e) {
@@ -385,9 +394,8 @@ function main() {
         }
     }
 
-    outputInstructions(inFile, instructions, {
-        exec: process.argv.slice(2).includes('-exec'),
-    });
+    const exec = process.argv.slice(2).includes('-exec');
+    outputInstructions(inFile, instructions, memory, { exec });
 
     if (parseError) {
         console.error(parseError.message);
