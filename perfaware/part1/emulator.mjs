@@ -13,6 +13,17 @@ Object.defineProperty(REGISTER_WORD_LAYOUT, '__size', {
     enumerable: false,
 });
 
+const REGISTER_BYTE_LAYOUT = {
+    al: 0x00,
+    ah: 0x01,
+    bl: 0x02,
+    bh: 0x03,
+    cl: 0x04,
+    ch: 0x05,
+    dl: 0x06,
+    dh: 0x07,
+};
+
 const FLAGS = ['s', 'z'];
 
 export function initialMachineState() {
@@ -34,6 +45,10 @@ function readRegister(machineState, name) {
         const offset = REGISTER_WORD_LAYOUT[name];
         return machineState.registers.readInt16LE(offset);
     }
+    if (REGISTER_BYTE_LAYOUT.propertyIsEnumerable(name)) {
+        const offset = REGISTER_BYTE_LAYOUT[name];
+        return machineState.registers.readInt8(offset);
+    }
     return 0;
 }
 
@@ -41,6 +56,9 @@ function writeRegister(machineState, name, value) {
     if (REGISTER_WORD_LAYOUT.propertyIsEnumerable(name)) {
         const offset = REGISTER_WORD_LAYOUT[name];
         machineState.registers.writeInt16LE(value, offset);
+    } else if (REGISTER_BYTE_LAYOUT.propertyIsEnumerable(name)) {
+        const offset = REGISTER_BYTE_LAYOUT[name];
+        machineState.registers.writeInt8(value, offset);
     }
 }
 
@@ -208,28 +226,28 @@ function computeBinaryOpResult(machineState, instruction, memory) {
     return value;
 }
 
-function writeBinaryOp(machineState, destination, value, memory) {
-    switch (destination.type) {
-        case 'register':
-            writeRegister(machineState, destination.registerName, value);
-            break;
-        case 'directAddress':
-            memory.writeInt16LE(value, destination.address);
-            break;
-        case 'effectiveAddress':
-            const address = evaluateEffectiveAddress(machineState, destination);
-            memory.writeInt16LE(value, address);
-            break;
-        default:
-            break;
+function writeBinaryOp(machineState, destination, value, width, memory) {
+    if (destination.type === 'register') {
+        writeRegister(machineState, destination.registerName, value);
+        return;
+    }
+
+    const address =
+        destination.type === 'effectiveAddress'
+            ? evaluateEffectiveAddress(machineState, destination)
+            : destination.address;
+    if (width === 'byte') {
+        memory.writeInt8(value, address);
+    } else {
+        memory.writeInt16LE(value, address);
     }
 }
 
 export function executeBinaryOp(machineState, instruction, memory) {
-    const { op, destination } = instruction;
+    const { op, destination, width } = instruction;
     const value = computeBinaryOpResult(machineState, instruction, memory);
     if (op !== 'cmp') {
-        writeBinaryOp(machineState, destination, value, memory);
+        writeBinaryOp(machineState, destination, value, width, memory);
     }
 }
 
@@ -237,6 +255,13 @@ export function execJump(machineState, instruction) {
     const { op } = instruction;
     if (op === 'jne') {
         if (!machineState.flags.z) {
+            machineState.ip += instruction.increment;
+        }
+    } else if (op === 'loop') {
+        const cxValue = readRegister(machineState, 'cx');
+        const decrementedValue = cxValue - 1;
+        writeRegister(machineState, 'cx', decrementedValue);
+        if (decrementedValue !== 0) {
             machineState.ip += instruction.increment;
         }
     }

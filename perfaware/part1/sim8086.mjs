@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 import {
     cloneMachineState,
@@ -370,7 +370,8 @@ function outputInstructions(inFile, instructions, memory, { exec } = {}) {
 }
 
 function main() {
-    const inFile = process.argv.slice(2).find((arg) => !arg.startsWith('-'));
+    const programArgs = process.argv.slice(2);
+    const inFile = programArgs.find((arg) => !arg.startsWith('-'));
     const fileBuffer = readFileSync(inFile);
     const programSize = fileBuffer.length;
     const memory = Buffer.alloc(65536);
@@ -394,8 +395,12 @@ function main() {
         }
     }
 
-    const exec = process.argv.slice(2).includes('-exec');
+    const exec = programArgs.includes('-exec');
     outputInstructions(inFile, instructions, memory, { exec });
+
+    if (programArgs.includes('-dump')) {
+        writeFileSync('sim8086_memory_0.data', memory);
+    }
 
     if (parseError) {
         console.error(parseError.message);
